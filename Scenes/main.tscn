@@ -1,0 +1,22 @@
+[gd_scene load_steps=3 format=3 uid="uid://c1c0g6a44l87r"]
+
+[ext_resource type="PackedScene" uid="uid://d1fcwlucb6oqd" path="res://Scenes/board.tscn" id="1_jjgbg"]
+[ext_resource type="Script" uid="uid://m1ixnxxprfk1" path="res://Scenes/board.gd" id="2_bo1nx"]
+
+[node name="Main" type="Node2D"]
+
+[node name="Camera2D" type="Camera2D" parent="."]
+position = Vector2(88, -88)
+zoom = Vector2(2, 2)
+
+[node name="CanvasLayer" type="CanvasLayer" parent="."]
+
+[node name="HUDGroup (Conrtrol)" type="Control" parent="CanvasLayer"]
+layout_mode = 3
+anchors_preset = 0
+offset_right = 40.0
+offset_bottom = 40.0
+
+[node name="Board" parent="." instance=ExtResource("1_jjgbg")]
+position = Vector2(88, -88)
+script = ExtResource("2_bo1nx")

@@ -1,0 +1,16 @@
+[gd_scene load_steps=2 format=3 uid="uid://d1fcwlucb6oqd"]
+
+[ext_resource type="Texture2D" uid="uid://bhh6pt8mc53el" path="res://Assets/board.png" id="1_2wvcj"]
+
+[node name="Board" type="Sprite2D"]
+texture = ExtResource("1_2wvcj")
+
+[node name="Pieces" type="Node2D" parent="."]
+
+[node name="Dots" type="Node2D" parent="."]
+
+[node name="Turn" type="Sprite2D" parent="."]
+offset = Vector2(120, 0)
+
+[node name="Cards" type="Node2D" parent="."]
+scale = Vector2(0.25, 0.25)
