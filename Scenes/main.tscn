@@ -1,5 +1,6 @@
-[gd_scene load_steps=3 format=3 uid="uid://c1c0g6a44l87r"]
+[gd_scene load_steps=4 format=3 uid="uid://c1c0g6a44l87r"]
 
+[ext_resource type="Script" uid="uid://djg1dww55vps0" path="res://UI.gd" id="1_8gbba"]
 [ext_resource type="PackedScene" uid="uid://d1fcwlucb6oqd" path="res://Scenes/board.tscn" id="1_jjgbg"]
 [ext_resource type="Script" uid="uid://m1ixnxxprfk1" path="res://Scenes/board.gd" id="2_bo1nx"]
 
@@ -10,6 +11,7 @@ position = Vector2(88, -88)
 zoom = Vector2(2, 2)
 
 [node name="CanvasLayer" type="CanvasLayer" parent="."]
+script = ExtResource("1_8gbba")
 
 [node name="HUDGroup (Conrtrol)" type="Control" parent="CanvasLayer"]
 layout_mode = 3

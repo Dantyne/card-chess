@@ -43,19 +43,17 @@ const PIECE_SCORE := {
 	6: 0    # king (not really captured in your rules)
 }
 
+@onready var player = preload("res://Player.gd").new()
 @onready var pieces = $Pieces
 @onready var dots = $Dots
 @onready var turn = $Turn
 @onready var cards_node = $Cards
-@onready var hud_panel: Panel = null
-@onready var ui_layer: CanvasLayer = null
-@onready var hud_group: Control = null
-@onready var health_icon: TextureRect = null
-@onready var health_label: Label = null
-@onready var mana_icon: TextureRect = null
-@onready var mana_label: Label = null
-@onready var moves_label: Label = null
-@onready var score_label: Label = null
+
+#seperate .gd files
+@onready var ui: Node = $"../CanvasLayer"   # CanvasLayer has UI.gd attached
+@onready var input_ctrl = preload("res://InputController.gd").new()
+@onready var rules: MoveRules = MoveRules.new()
+
 #Variables
 # -6 = black king
 # -5 = black queen
@@ -91,8 +89,6 @@ var hand: Array = []
 var discard: Array = []
 var hand_nodes: Array[Node2D] = []
 
-var mana_max := 5
-var mana := 5
 var hand_size := 3
 var max_hand_size : int = 3
 
@@ -127,85 +123,82 @@ func _ready():
 	board.append([0, 0, 0, 0, 0, 0, 0, 0])
 	board.append([my_numbers.pick_random(), my_numbers.pick_random(), my_numbers.pick_random(), my_numbers.pick_random(), my_numbers.pick_random(), my_numbers.pick_random(), my_numbers.pick_random(), my_numbers.pick_random()])
 	
+	add_child(input_ctrl)
+	input_ctrl.CELL_WIDTH = CELL_WIDTH
+	input_ctrl.board_ref = self
+	input_ctrl.piece_selected.connect(_on_piece_selected)
+	input_ctrl.piece_deselected.connect(_on_piece_deselected)
+	input_ctrl.move_attempted.connect(_on_move_attempted)
+	
+	add_child(rules)
+	
 	display_board()          # Draw the board first
 	init_deck()              # Build your card deck
 
-	ensure_hud()             # Create HUD and icons
 	render_hand()            # Show player’s starting hand
-	update_hud_layout()      # Position icons beside cards
-	update_hud_values()      # Display correct HP / Mana values
 
 	start_white_turn()       # Give White a hand at start
 	display_board()          # Final refresh
 	
 func _input(event):
-	if event is InputEventMouseButton and event.pressed:
-		var mx = get_global_mouse_position()
+	if not (event is InputEventMouseButton and event.pressed):
+		return
+	var mx = get_global_mouse_position()
 
-		# --- Right-click: cancel targeting or selection ---
-		if event.button_index == MOUSE_BUTTON_RIGHT:
-			if card_targeting:
-				card_targeting = false
-				card_selected_idx = -1
-				delete_dots()
-			elif state:
-				state = false
-				delete_dots()
+	# --- Right-click: cancel targeting or selection owned by Board (cards) ---
+	if event.button_index == MOUSE_BUTTON_RIGHT:
+		if card_targeting:
+			card_targeting = false
+			card_selected_idx = -1
+			delete_dots()
+			return
+		# if we didn't handle a card case, let InputController handle generic deselect
+		if input_ctrl.process_board_click(event):
+			return
+		return
+
+	# --- Left-click handling ---
+	if event.button_index == MOUSE_BUTTON_LEFT:
+		# 1) Cards take priority
+		var idx := card_index_at_mouse(mx)
+		if idx != -1:
+			try_play_card(idx)
 			return
 
-		# --- Left-click handling ---
-		if event.button_index == MOUSE_BUTTON_LEFT:
-			# 1) Cards take priority: click on a card to play/enter targeting
-			var idx := card_index_at_mouse(mx)
-			if idx != -1:
-				try_play_card(idx)
-				return
-
-			# 2) If we are targeting a card effect, apply it to a board square
-			if card_targeting:
-				if is_mouse_out():
-					return  # click outside board while targeting = ignore (right-click cancels)
-				var var1 = int(snapped(mx.x, 0) / CELL_WIDTH)
-				var var2 = int(abs(snapped(mx.y, 0)) / CELL_WIDTH)
-				apply_card_to_square(var2, var1)
-				return
-
-			# 3) Normal board interaction
-			# Clicked off the board? Deselect current piece selection.
+		# 2) Card targeting to a board square
+		if card_targeting:
 			if is_mouse_out():
-				if state:
-					state = false
-					delete_dots()
 				return
-
 			var var1 = int(snapped(mx.x, 0) / CELL_WIDTH)
 			var var2 = int(abs(snapped(mx.y, 0)) / CELL_WIDTH)
-			var clicked := Vector2(var2, var1)
+			apply_card_to_square(var2, var1)
+			return
 
-			if !state:
-				# Select a piece if it’s your color
-				if (white and board[var2][var1] > 0) or (!white and board[var2][var1] < 0):
-					selected_piece = clicked
-					show_options()
-					state = true
-				return
-			else:
-				# If clicking the same piece, toggle off (deselect)
-				if clicked == selected_piece:
-					state = false
-					delete_dots()
-					return
+		# 3) Otherwise, delegate board clicks to InputController
+		if input_ctrl.process_board_click(event):
+			return
 
-				# If clicking another of your pieces, switch selection
-				if (white and board[var2][var1] > 0) or (!white and board[var2][var1] < 0):
-					delete_dots()
-					selected_piece = clicked
-					show_options()
-					return
+func _on_piece_selected(pos: Vector2) -> void:
+	# Only allow selecting your own piece
+	if (white and board[int(pos.x)][int(pos.y)] > 0) or (!white and board[int(pos.x)][int(pos.y)] < 0):
+		selected_piece = pos
+		show_options()
+		state = true
+	else:
+		_on_piece_deselected()
 
-				# Otherwise try to move to that square
-				set_move(var2, var1)
-				
+func _on_piece_deselected() -> void:
+	state = false
+	delete_dots()
+
+func _on_move_attempted(from: Vector2, to: Vector2) -> void:
+	# If clicking same piece, deselect
+	if from == to:
+		_on_piece_deselected()
+		return
+	# Let your existing move resolver run
+	set_move(int(to.x), int(to.y))
+
 func is_mouse_out() -> bool:
 	return get_global_mouse_position().x < 0 \
 		or get_global_mouse_position().x > 176 \
@@ -241,178 +234,6 @@ func display_board ():
 	if white: turn.texture = TURN_WHITE
 	else: turn.texture = TURN_BLACK
 	
-func ensure_ui_layer():
-	if has_node("UILayer"):
-		ui_layer = get_node("UILayer") as CanvasLayer
-	else:
-		ui_layer = CanvasLayer.new()
-		ui_layer.name = "UILayer"
-		add_child(ui_layer)
-	
-func ensure_hud():
-	ensure_ui_layer()
-
-	if ui_layer.has_node("HUDGroup"):
-		hud_group   = ui_layer.get_node("HUDGroup") as Control
-		health_icon = hud_group.get_node("HealthIcon") as TextureRect
-		health_label= hud_group.get_node("HealthLabel") as Label
-		mana_icon   = hud_group.get_node("ManaIcon") as TextureRect
-		mana_label  = hud_group.get_node("ManaLabel") as Label
-		moves_label = hud_group.get_node("MovesLabel") as Label
-		score_label = hud_group.get_node("ScoreLabel") as Label
-		return
-
-	hud_group = Control.new()
-	hud_group.name = "HUDGroup"
-	hud_group.z_index = 1000
-	hud_group.set_anchors_preset(Control.PRESET_TOP_LEFT)
-	ui_layer.add_child(hud_group)
-
-	# HEALTH
-	health_icon = TextureRect.new()
-	health_icon.name = "HealthIcon"
-	health_icon.texture = HEALTH
-	health_icon.stretch_mode = TextureRect.STRETCH_KEEP_CENTERED
-	health_icon.set_anchors_preset(Control.PRESET_TOP_LEFT)
-	hud_group.add_child(health_icon)
-
-	health_label = Label.new()
-	health_label.name = "HealthLabel"
-	health_label.text = "HP: %d/%d" % [player_health, player_max_health]
-	health_label.set_anchors_preset(Control.PRESET_TOP_LEFT)
-	health_label.add_theme_font_size_override("font_size", 16)
-	health_label.add_theme_color_override("font_color", Color(1,1,1))
-	health_label.add_theme_color_override("font_outline_color", Color(0,0,0))
-	health_label.add_theme_constant_override("outline_size", 2)
-	hud_group.add_child(health_label)
-
-	# MANA
-	mana_icon = TextureRect.new()
-	mana_icon.name = "ManaIcon"
-	mana_icon.texture = MANA
-	mana_icon.stretch_mode = TextureRect.STRETCH_KEEP_CENTERED
-	mana_icon.set_anchors_preset(Control.PRESET_TOP_LEFT)
-	hud_group.add_child(mana_icon)
-
-	mana_label = Label.new()
-	mana_label.name = "ManaLabel"
-	mana_label.text = "Mana: %d/%d" % [mana, mana_max]
-	mana_label.set_anchors_preset(Control.PRESET_TOP_LEFT)
-	mana_label.add_theme_font_size_override("font_size", 16)
-	mana_label.add_theme_color_override("font_color", Color(1,1,1))
-	mana_label.add_theme_color_override("font_outline_color", Color(0,0,0))
-	mana_label.add_theme_constant_override("outline_size", 2)
-	hud_group.add_child(mana_label)
-
-		# --- MOVES (text only; add an icon if you want) ---
-	moves_label = Label.new()
-	moves_label.name = "MovesLabel"
-	moves_label.text = "Moves: 0/0"
-	moves_label.set_anchors_preset(Control.PRESET_TOP_LEFT)
-	moves_label.add_theme_font_size_override("font_size", 16)
-	moves_label.add_theme_color_override("font_color", Color(1,1,1))
-	moves_label.add_theme_color_override("font_outline_color", Color(0,0,0))
-	moves_label.add_theme_constant_override("outline_size", 2)
-	hud_group.add_child(moves_label)
-
-	# If you want an icon above the label, uncomment this block:
-	# moves_icon = TextureRect.new()
-	# moves_icon.name = "MovesIcon"
-	# moves_icon.texture = MOVES_ICON
-	# moves_icon.stretch_mode = TextureRect.STRETCH_KEEP_CENTERED
-	# moves_icon.set_anchors_preset(Control.PRESET_TOP_LEFT)
-	# hud_group.add_child(moves_icon)
-
-	score_label = Label.new()
-	score_label.name = "ScoreLabel"
-	score_label.text = "Score: 0"
-	score_label.set_anchors_preset(Control.PRESET_TOP_LEFT)
-	score_label.add_theme_font_size_override("font_size", 16)
-	score_label.add_theme_color_override("font_color", Color(1,1,1))
-	score_label.add_theme_color_override("font_outline_color", Color(0,0,0))
-	score_label.add_theme_constant_override("outline_size", 2)
-	hud_group.add_child(score_label)
-
-func update_hud_layout():
-	if hud_group == null:
-		return
-
-	# If we have any card nodes, anchor to the last one’s screen position
-	var base_pos: Vector2
-	if hand_nodes.size() > 0:
-		var last_card: Node2D = hand_nodes.back()
-		base_pos = last_card.global_position
-	else:
-		# Fallback: approximate the card row center
-		var board_px: float = float(BOARD_SIZE * CELL_WIDTH)
-		var board_left: float = CELL_WIDTH * 0.5
-		var board_right: float = board_px - CELL_WIDTH * 0.5
-		var board_center_x: float = (board_left + board_right) * 0.5
-		var spacing: float = CELL_WIDTH * 1.3
-		var cards_y: float = CELL_WIDTH * 1.5
-		var start_x: float = board_center_x - ((max(1, hand.size()) - 1) * spacing) * 0.5
-		base_pos = Vector2(start_x + max(0, hand.size() - 1) * spacing, cards_y)
-
-	# Push the HUD a good distance to the right of the last card
-	var hud_x: float = base_pos.x + CELL_WIDTH * 4.0
-	var hud_y: float = base_pos.y  # align vertically with card row
-
-	# Sizing & gaps
-	var icon_h: float = float(CELL_WIDTH)
-	var label_h: float = 16.0               # approx label height (matches your font size)
-	var v_gap: float = CELL_WIDTH * 5.25    # gap between icon and its label
-	var group_gap: float = CELL_WIDTH * 5.40  # extra gap between blocks
-
-	# Optional: scale icons slightly so labels have room
-	health_icon.scale = Vector2(0.9, 0.9)
-	mana_icon.scale   = Vector2(0.9, 0.9)
-
-	# --- HEALTH block ---
-	health_icon.position  = Vector2(hud_x, hud_y)
-	var health_label_y    = hud_y + icon_h + v_gap
-	health_label.position = Vector2(hud_x + CELL_WIDTH * 0.5, health_label_y)
-	health_label.z_index  = 5
-
-	# --- MANA block (stacked below HEALTH block) ---
-	var mana_y            = health_label_y + label_h + group_gap
-	mana_icon.position    = Vector2(hud_x, mana_y)
-	var mana_label_y      = mana_y + icon_h + v_gap
-	mana_label.position   = Vector2(hud_x + CELL_WIDTH * 0.5, mana_label_y)
-	mana_label.z_index    = 5
-	
-	# --- MOVES (text only; stacked below MANA block) ---
-	var moves_y: float = mana_label_y + label_h + group_gap
-	moves_label.position = Vector2(hud_x + CELL_WIDTH * 0.5, moves_y)
-	moves_label.z_index = 5
-
-	# --- SCORE (stacked below MOVES) ---
-	var score_y: float = moves_y + label_h + group_gap
-	score_label.position = Vector2(hud_x + CELL_WIDTH * 0.5, score_y)
-	score_label.z_index = 5
-
-func update_hud():
-	if health_label:
-		health_label.text = "HP: %d/%d" % [player_health, player_max_health]
-	if mana_label:
-		mana_label.text = "Mana: %d/%d" % [mana, mana_max]
-		
-func update_hud_values():
-	if health_label:
-		health_label.text = "HP: %d/%d" % [player_health, player_max_health]
-
-	if mana_label:
-		mana_label.text = "Mana: %d/%d" % [mana, mana_max]
-
-	if moves_label:
-		var cap := base_move_cap + extra_moves_bonus
-		var remaining: int = max(0, cap - white_moves_this_turn)
-		moves_label.text = "Moves Left: %d" % remaining
-
-	if score_label:
-		var combo_txt := ""
-		if combo_count > 0:
-			combo_txt = "  (x%.1f)" % _combo_multiplier()
-		score_label.text = "Score: %d%s" % [score, combo_txt]
 
 func _score_value(piece_abs: int) -> int:
 	return PIECE_SCORE.get(piece_abs, 0)
@@ -427,24 +248,23 @@ func _award_white_capture(captured_abs: int):
 	var points := int(round(float(base) * _combo_multiplier()))
 	score += points
 	combo_count += 1  # consecutive capture improves multiplier for next one
-	update_hud_values()
 
 func _penalize_white_loss(lost_abs: int):
 	var base := _score_value(lost_abs)
 	if base <= 0:
 		return
 	score -= base
-	update_hud_values()
 
 func _break_combo_if_any():
 	if combo_count > 0:
 		combo_count = 0
-		update_hud_values()
 
 
-func show_options():
-	moves = get_moves()
-	if moves == []:
+func show_options() -> void:
+	var pval: int = abs(int(board[int(selected_piece.x)][int(selected_piece.y)]))
+	var mv: Array[Vector2] = rules.raw_moves(pval, selected_piece, white, board)
+	moves = mv  # keep using your existing 'moves' array
+	if moves.is_empty():
 		state = false
 		return
 	show_dots()
@@ -480,18 +300,19 @@ func set_move(var2, var1):
 				# Update score / combo
 				if captured_abs > 0:
 					_award_white_capture(captured_abs)
+					ui.set_score(score, _combo_multiplier())
 				else:
 					_break_combo_if_any()
 
 				white_moves_this_turn += 1
-				update_hud_values()
+				var cap := base_move_cap + extra_moves_bonus
+				ui.set_moves_left(max(0, cap - white_moves_this_turn))
 
 				# End White's turn if move limit reached (3 + any bonuses)
 				if white_moves_this_turn >= (base_move_cap + extra_moves_bonus):
 					white = false
 					white_moves_this_turn = 0
 					extra_moves_bonus = 0  # reset bonus for next turn
-					update_hud_values()
 
 					# Remove white pieces on Black's back row (and penalize loss)
 					purge_white_on_black_back_row()
@@ -512,12 +333,12 @@ func replenish_black_back_row():
 				new_black_positions.append(Vector2(7, col))
 		
 func move_black_pieces_randomly() -> void:
-	var black_positions = []
+	var black_positions: Array[Vector2] = []
 
 	# Collect all black pieces
 	for x in range(board.size()):
 		for y in range(board[x].size()):
-			if board[x][y] < 0:
+			if int(board[x][y]) < 0:
 				black_positions.append(Vector2(x, y))
 
 	black_positions.shuffle()
@@ -527,27 +348,32 @@ func move_black_pieces_randomly() -> void:
 		if new_black_positions.has(pos):
 			continue
 
-		var moves = get_moves_for_piece(pos, false)
-		if moves.size() == 0:
+		var piece_val: int = abs(int(board[int(pos.x)][int(pos.y)]))
+		var moves: Array[Vector2] = rules.raw_moves(piece_val, pos, false, board)
+		if moves.is_empty():
 			continue
 
 		# For black, "forward" means decreasing x (toward White’s side)
-		var forward_moves: Array = []
+		var forward_moves: Array[Vector2] = []
 		for m in moves:
 			if m.x < pos.x:
 				forward_moves.append(m)
 
-		var valid_moves = forward_moves if forward_moves.size() > 0 else moves
-		var move = valid_moves.pick_random()
+		var valid_moves: Array[Vector2] = forward_moves
+		if valid_moves.is_empty():
+			valid_moves = moves
 
-		var from_x := int(pos.x)
-		var from_y := int(pos.y)
-		var to_x := int(move.x)
-		var to_y := int(move.y)
+		var move: Vector2 = valid_moves.pick_random()
 
-		# --- Step 4: Penalize when BLACK captures a WHITE piece ---
-		if board[to_x][to_y] > 0:
-			_penalize_white_loss(abs(board[to_x][to_y]))  # updates score/HUD
+		var from_x: int = int(pos.x)
+		var from_y: int = int(pos.y)
+		var to_x: int = int(move.x)
+		var to_y: int = int(move.y)
+
+		# Penalize when BLACK captures a WHITE piece
+		if int(board[to_x][to_y]) > 0:
+			_penalize_white_loss(abs(int(board[to_x][to_y])))
+			ui.set_score(score, _combo_multiplier())
 
 		# Execute the move
 		board[to_x][to_y] = board[from_x][from_y]
@@ -560,6 +386,7 @@ func move_black_pieces_randomly() -> void:
 
 	# After all black moves, check if any black piece reached White’s final row
 	check_black_pieces_on_final_row()
+	ui.set_health(player_health, player_max_health)
 
 	# Switch back to White’s turn
 	white = true
@@ -571,6 +398,7 @@ func purge_white_on_black_back_row():
 	for y in range(BOARD_SIZE):
 		if board[7][y] > 0:
 			_penalize_white_loss(abs(board[7][y]))
+			ui.set_score(score, _combo_multiplier())
 			board[7][y] = 0
 			removed = true
 	if removed:
@@ -582,7 +410,6 @@ func check_black_pieces_on_final_row():
 			# Black piece reached the bottom (player side)
 			board[0][y] = 0  # remove it
 			player_health -= 1
-			update_hud()
 			print("⚔️ Player took 1 damage! Health =", player_health, "/", player_max_health)
 
 			# Optional: if you want a loss condition
@@ -598,181 +425,6 @@ func is_black_piece(value):
 	# Adjust depending on how you represent pieces
 	# Example: white pieces > 0, black pieces < 0
 	return value < 0
-	
-func get_moves():
-		var _moves = []
-		match abs(board[selected_piece.x][selected_piece.y]):
-			1: _moves = get_pawn_moves()
-			2: _moves = get_bishop_moves()
-			3: _moves = get_knight_moves()
-			4: _moves = get_rook_moves()
-			5: _moves = get_queen_moves()
-			6: _moves = get_king_moves()
-
-		return _moves
-		
-func get_moves_for_piece(pos: Vector2, is_white: bool) -> Array:
-	var _moves = []
-	var piece = abs(board[pos.x][pos.y])
-
-	# Temporarily store current context
-	var prev_selected = selected_piece
-	var prev_white = white
-
-	selected_piece = pos
-	white = is_white
-
-	match piece:
-		1: _moves = get_pawn_moves()
-		2: _moves = get_bishop_moves()
-		3: _moves = get_knight_moves()
-		4: _moves = get_rook_moves()
-		5: _moves = get_queen_moves()
-		6: _moves = get_king_moves()
-
-	# Restore context
-	selected_piece = prev_selected
-	white = prev_white
-
-	return _moves
-		
-func get_king_moves():
-	var _moves = []
-	var directions = [Vector2(1,1), Vector2 (1, -1), Vector2 (-1, -1), Vector2 (-1, 1), Vector2(0, 1), Vector2 (0, -1), Vector2 (1, 0), Vector2 (-1, 0)]
-	
-	for i in directions:
-		var pos = selected_piece + i
-		if is_valid_position(pos):
-			if is_empty(pos): _moves.append(pos)
-			elif is_enemy(pos):
-				_moves.append(pos)
-		
-	return _moves
-
-func get_pawn_moves() -> Array:
-	var _moves = []
-	var direction = Vector2(1, 0) if white else Vector2(-1, 0)
-
-	# One step forward
-	var pos = selected_piece + direction
-	if is_valid_position(pos) and is_empty(pos):
-		_moves.append(pos)
-
-		# Two steps forward (only if first move)
-		var start_row = 1 if white else 6  # white pawns start at row 1, black at row 6
-		if int(selected_piece.x) == start_row:
-			var two_step = selected_piece + direction * 2
-			if is_valid_position(two_step) and is_empty(two_step):
-				_moves.append(two_step)
-
-	# Diagonal attacks
-	for dy in [-1, 1]:
-		pos = selected_piece + Vector2(direction.x, dy)
-		if is_valid_position(pos) and is_enemy(pos):
-			_moves.append(pos)
-
-	return _moves
-
-func get_knight_moves():
-	var _moves = []
-	var directions = []
-
-	if white:
-		# White: all 8 L moves
-		directions = [
-			Vector2(2, 1), Vector2(2, -1),
-			Vector2(-2, 1), Vector2(-2, -1),
-			Vector2(1, 2), Vector2(1, -2),
-			Vector2(-1, 2), Vector2(-1, -2)
-		]
-	else:
-		# Black: only L moves that go forward (x decreases)
-		directions = [
-			Vector2(-2, 1), Vector2(-2, -1),
-			Vector2(-1, 2), Vector2(-1, -2)
-		]
-
-	for dir in directions:
-		var pos = selected_piece + dir
-		if is_valid_position(pos) and (is_empty(pos) or is_enemy(pos)):
-			_moves.append(pos)
-	return _moves
-
-func get_rook_moves():
-	var _moves = []
-
-	var dirs = []
-	if white:
-		dirs = [Vector2(1,0), Vector2(-1,0), Vector2(0,1), Vector2(0,-1)]
-	else:
-		# Black: forward (x - 1) and sideways only
-		dirs = [Vector2(-1,0), Vector2(0,1), Vector2(0,-1)]
-
-	for dir in dirs:
-		var pos = selected_piece
-		for step in range(2):  # keep your 2-tile cap
-			pos += dir
-			if !is_valid_position(pos): break
-			if is_empty(pos):
-				_moves.append(pos)
-			elif is_enemy(pos):
-				_moves.append(pos); break
-			else:
-				break
-	return _moves
-
-func get_bishop_moves():
-	var _moves = []
-
-	var dirs = []
-	if white:
-		dirs = [Vector2(1,1), Vector2(1,-1), Vector2(-1,1), Vector2(-1,-1)]
-	else:
-		# Black: forward diagonals only (x decreases)
-		dirs = [Vector2(-1,1), Vector2(-1,-1)]
-
-	for dir in dirs:
-		var pos = selected_piece
-		for step in range(2):
-			pos += dir
-			if !is_valid_position(pos): break
-			if is_empty(pos):
-				_moves.append(pos)
-			elif is_enemy(pos):
-				_moves.append(pos); break
-			else:
-				break
-	return _moves
-
-func get_queen_moves():
-	var _moves = []
-
-	var dirs = []
-	if white:
-		dirs = [
-			Vector2(1,0), Vector2(-1,0), Vector2(0,1), Vector2(0,-1),
-			Vector2(1,1), Vector2(1,-1), Vector2(-1,1), Vector2(-1,-1)
-		]
-	else:
-		# Black: forward (x - 1), sideways, forward diagonals
-		dirs = [
-			Vector2(-1,0), Vector2(0,1), Vector2(0,-1),
-			Vector2(-1,1), Vector2(-1,-1)
-		]
-
-	for dir in dirs:
-		var pos = selected_piece
-		for step in range(3):  # keep your 3-tile cap
-			pos += dir
-			if !is_valid_position(pos): break
-			if is_empty(pos):
-				_moves.append(pos)
-			elif is_enemy(pos):
-				_moves.append(pos); break
-			else:
-				break
-	return _moves
-
 	
 func is_valid_position(pos : Vector2):
 	if pos.x >= 0 && pos.x < BOARD_SIZE && pos.y >= 0 && pos.y < BOARD_SIZE: return true
@@ -817,19 +469,26 @@ func init_deck():
 	for i in 4: deck.append(make_card(CardType.EXTRA_MOVE))
 	deck.shuffle()
 
-func start_white_turn():
-	mana = mana_max
-	extra_moves_bonus = 0    # reset extra moves gained last turn
-	combo_count = 0                 # reset combo each new white turn
-	update_hud_values()        
+func start_white_turn() -> void:
+	player.gain_gold(1)
+	extra_moves_bonus = 0
+	combo_count = 0
+
+	# UI: gold/moves/score/health before drawing
+	var cap := base_move_cap + extra_moves_bonus
+	ui.set_gold(player.gold)
+	ui.set_moves_left(cap)  # 0 moves used at turn start
+	ui.set_score(score, _combo_multiplier())
+	ui.set_health(player_health, player_max_health)
+
 	draw_cards_to(hand_size)
 	render_hand()
+	ui.layout_beside_cards(hand_nodes)
 
-func draw_cards_to(size: int):
+func draw_cards_to(size: int) -> void:
 	while hand.size() < size and deck.size() > 0:
 		hand.append(deck.pop_back())
-	render_hand()
-	update_hud()
+	# No UI calls here; render/layout handled by caller.
 
 func discard_card(idx: int):
 	if idx < 0 or idx >= hand.size(): return
@@ -865,7 +524,6 @@ func render_hand():
 		holder.name = "Card_%d" % i
 		hand_nodes.append(holder as Node2D)
 		
-	update_hud_layout()
 		
 func card_index_at_mouse(pos: Vector2) -> int:
 	# very simple hit test: distance to sprite center < CELL_WIDTH
@@ -881,18 +539,17 @@ func try_play_card(idx: int):
 
 	var c: Dictionary = hand[idx]
 	var t := int(c["type"])
-	if mana < int(c["cost"]): 
+	if player.gold < int(c["cost"]):
 		return
 
 	match t:
 		CardType.EXTRA_MOVE:
 			# +1 move for the CURRENT white turn (stackable)
 			extra_moves_bonus += 1
-			mana -= int(c["cost"])
+			player.spend_gold(int(c["cost"]))
+			ui.set_gold(player.gold)
 			discard_card(idx)
-			update_hud_values()
 			render_hand()
-			update_hud()
 
 		_:  # SUMMON_* or SMITE needs a target
 			card_selected_idx = idx
@@ -944,16 +601,16 @@ func apply_card_to_square(var2: int, var1: int):
 		# must be empty and on White half
 		if board[var2][var1] == 0 and var2 <= 3:
 			board[var2][var1] = _piece_value_for_summon(t)
-			mana -= cost
+			player.spend_gold(int(c["cost"]))
+			ui.set_gold(player.gold)
 			discard_card(card_selected_idx)
-			update_hud_values()
 	# Smite
 	elif t == CardType.SMITE:
 		if board[var2][var1] < 0:
 			board[var2][var1] = 0
-			mana -= cost
+			player.spend_gold(int(c["cost"]))
+			ui.set_gold(player.gold)
 			discard_card(card_selected_idx)
-			update_hud_values()
 
 	card_selected_idx = -1
 	card_targeting = false
