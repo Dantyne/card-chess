@@ -53,6 +53,7 @@ const PIECE_SCORE := {
 @onready var ui: Node = $"../CanvasLayer"   # CanvasLayer has UI.gd attached
 @onready var input_ctrl = preload("res://InputController.gd").new()
 @onready var rules: MoveRules = MoveRules.new()
+@onready var turn_mgr: TurnManager = $"../TurnManager"
 
 #Variables
 # -6 = black king
@@ -112,8 +113,8 @@ var player_health: int = 10
 var player_max_health: int = 10
 
 
-func _ready():
-	
+func _ready() -> void:
+	# --- 1. Initialize board layout ---
 	board.append([4, 2, 3, 5, 6, 3, 2, 4])
 	board.append([1, 1, 1, 1, 1, 1, 1, 1])
 	board.append([0, 0, 0, 0, 0, 0, 0, 0])
@@ -121,24 +122,64 @@ func _ready():
 	board.append([0, 0, 0, 0, 0, 0, 0, 0])
 	board.append([0, 0, 0, 0, 0, 0, 0, 0])
 	board.append([0, 0, 0, 0, 0, 0, 0, 0])
-	board.append([my_numbers.pick_random(), my_numbers.pick_random(), my_numbers.pick_random(), my_numbers.pick_random(), my_numbers.pick_random(), my_numbers.pick_random(), my_numbers.pick_random(), my_numbers.pick_random()])
-	
+	board.append([-4, -2, -3, -5, -6, -3, -2, -4])
+
+	# --- 2. Add & configure helper scripts ---
 	add_child(input_ctrl)
 	input_ctrl.CELL_WIDTH = CELL_WIDTH
 	input_ctrl.board_ref = self
 	input_ctrl.piece_selected.connect(_on_piece_selected)
 	input_ctrl.piece_deselected.connect(_on_piece_deselected)
 	input_ctrl.move_attempted.connect(_on_move_attempted)
-	
 	add_child(rules)
+
+	# --- 3. Connect Player and UI ---
+	player.connect("gold_changed", func(g: int): ui.set_gold(g))
+
+	# Optional: make sure HUD labels exist before updating
+	if ui.has_method("update_hud_values"):
+		ui.update_hud_values()
+
+	# --- 4. Initialize Deck & Hand ---
+	display_board()
+	init_deck()
+	render_hand()
+	start_white_turn()
+	display_board()
+
+	# --- 5. Initialize Shop UI ---
+	_wire_shop_ui()
 	
-	display_board()          # Draw the board first
-	init_deck()              # Build your card deck
+func _wire_shop_ui() -> void:
+	var shop: Node = get_node_or_null("../ShopManager")
+	if shop and ui:
+		if ui.has_method("ensure_shop"):
+			ui.ensure_shop()
+		if shop.has_method("roll_shop"):
+			shop.roll_shop()
 
-	render_hand()            # Show player’s starting hand
+		if ui.has_method("show_shop"):
+			ui.show_shop(shop.get("current"))
+		if ui.has_method("bind_shop_controls"):
+			ui.bind_shop_controls(shop)
 
-	start_white_turn()       # Give White a hand at start
-	display_board()          # Final refresh
+		if shop.has_signal("shop_updated"):
+			shop.shop_updated.connect(func(items):
+				if ui.has_method("show_shop"):
+					ui.show_shop(items)
+				if ui.has_method("bind_shop_controls"):
+					ui.bind_shop_controls(shop)
+			)
+		if shop.has_signal("purchase_failed"):
+			shop.purchase_failed.connect(func(reason):
+				if ui.has_method("show_shop_message"):
+					ui.show_shop_message(reason)
+			)
+		if shop.has_signal("purchase_succeeded"):
+			shop.purchase_succeeded.connect(func(item):
+				if ui.has_method("show_shop_message"):
+					ui.show_shop_message("Bought: " + item.name)
+			)
 	
 func _input(event):
 	if not (event is InputEventMouseButton and event.pressed):
@@ -241,13 +282,24 @@ func _score_value(piece_abs: int) -> int:
 func _combo_multiplier() -> float:
 	return COMBO_BASE + float(combo_count) * COMBO_STEP
 
-func _award_white_capture(captured_abs: int):
-	var base := _score_value(captured_abs)
-	if base <= 0: 
+func _award_white_capture(captured_abs: int) -> void:
+	var base: int = _score_value(captured_abs)
+	if base <= 0:
 		return
-	var points := int(round(float(base) * _combo_multiplier()))
+
+	var points: int = int(round(float(base) * _combo_multiplier()))
 	score += points
-	combo_count += 1  # consecutive capture improves multiplier for next one
+	combo_count += 1  # combo for scoring
+
+	# --- Gold reward (new) ---
+	var gold_gain: int = max(1, int(base / 2))  # adjust rate: half piece value minimum 1
+
+	if player.has_method("gain_gold"):
+		player.gain_gold(gold_gain)
+
+	# HUD updates
+	ui.set_gold(player.gold)
+	ui.set_score(score, _combo_multiplier())
 
 func _penalize_white_loss(lost_abs: int):
 	var base := _score_value(lost_abs)
@@ -271,10 +323,15 @@ func show_options() -> void:
 	
 func show_dots():
 	for i in moves:
+		if typeof(i) != TYPE_VECTOR2:
+			continue
 		var holder = TEXTURE_HOLDER.instantiate()
 		dots.add_child(holder)
 		holder.texture = PIECE_MOVE
-		holder.global_position = Vector2(i.y * CELL_WIDTH + (CELL_WIDTH / 2), -i.x * CELL_WIDTH - (CELL_WIDTH / 2))
+		holder.global_position = Vector2(
+			int(i.y) * CELL_WIDTH + (CELL_WIDTH / 2),
+			-int(i.x) * CELL_WIDTH - (CELL_WIDTH / 2)
+		)
 	
 func delete_dots():
 	for child in dots.get_children():
@@ -282,45 +339,35 @@ func delete_dots():
 	
 func set_move(var2, var1):
 	for i in moves:
-		if i.x == var2 and i.y == var1:
-			# Was this a capture?
-			var captured_abs := 0
-			if white and board[var2][var1] < 0:
-				captured_abs = abs(board[var2][var1])
+		if typeof(i) != TYPE_VECTOR2:
+			continue
+		if int(i.x) == int(var2) and int(i.y) == int(var1):
+			# safe, in-bounds write
+			var from_x := int(selected_piece.x)
+			var from_y := int(selected_piece.y)
+			var to_x := int(var2)
+			var to_y := int(var1)
+			if to_x < 0 or to_x >= board.size(): return
+			if to_y < 0 or to_y >= board[to_x].size(): return
 
-			# Move the selected piece
-			board[var2][var1] = board[selected_piece.x][selected_piece.y]
-			board[selected_piece.x][selected_piece.y] = 0
+			var captured_abs := 0
+			if white and int(board[to_x][to_y]) < 0:
+				captured_abs = abs(int(board[to_x][to_y]))
+
+			board[to_x][to_y] = board[from_x][from_y]
+			board[from_x][from_y] = 0
 
 			display_board()
 			delete_dots()
 			state = false
 
 			if white:
-				# Update score / combo
-				if captured_abs > 0:
-					_award_white_capture(captured_abs)
-					ui.set_score(score, _combo_multiplier())
-				else:
-					_break_combo_if_any()
-
-				white_moves_this_turn += 1
-				var cap := base_move_cap + extra_moves_bonus
-				ui.set_moves_left(max(0, cap - white_moves_this_turn))
-
-				# End White's turn if move limit reached (3 + any bonuses)
-				if white_moves_this_turn >= (base_move_cap + extra_moves_bonus):
-					white = false
-					white_moves_this_turn = 0
-					extra_moves_bonus = 0  # reset bonus for next turn
-
-					# Remove white pieces on Black's back row (and penalize loss)
-					purge_white_on_black_back_row()
-
-					replenish_black_back_row()
-					display_board()
-					move_black_pieces_randomly()
-
+				if captured_abs > 0: _award_white_capture(captured_abs) 
+				else: _break_combo_if_any()
+				turn_mgr.register_white_move()
+				ui.set_moves_left(turn_mgr.moves_left())
+				if turn_mgr.is_white_turn_over():
+					await turn_mgr.process_end_of_white_turn()
 			return
 		
 func replenish_black_back_row():
@@ -388,11 +435,6 @@ func move_black_pieces_randomly() -> void:
 	check_black_pieces_on_final_row()
 	ui.set_health(player_health, player_max_health)
 
-	# Switch back to White’s turn
-	white = true
-	start_white_turn()
-	display_board()
-	
 func purge_white_on_black_back_row():
 	var removed := false
 	for y in range(BOARD_SIZE):
@@ -470,20 +512,20 @@ func init_deck():
 	deck.shuffle()
 
 func start_white_turn() -> void:
+	# Base economy & per-turn reset that Board owns
 	player.gain_gold(1)
-	extra_moves_bonus = 0
 	combo_count = 0
 
-	# UI: gold/moves/score/health before drawing
-	var cap := base_move_cap + extra_moves_bonus
-	ui.set_gold(player.gold)
-	ui.set_moves_left(cap)  # 0 moves used at turn start
-	ui.set_score(score, _combo_multiplier())
-	ui.set_health(player_health, player_max_health)
-
+	# Draw & layout
 	draw_cards_to(hand_size)
 	render_hand()
 	ui.layout_beside_cards(hand_nodes)
+
+	# HUD owned by Board values
+	ui.set_gold(player.gold)
+	ui.set_score(score, _combo_multiplier())
+	ui.set_health(player_health, player_max_health)
+
 
 func draw_cards_to(size: int) -> void:
 	while hand.size() < size and deck.size() > 0:
@@ -544,12 +586,13 @@ func try_play_card(idx: int):
 
 	match t:
 		CardType.EXTRA_MOVE:
-			# +1 move for the CURRENT white turn (stackable)
-			extra_moves_bonus += 1
+			# +1 move this white turn
+			turn_mgr.add_extra_moves_bonus(1)
 			player.spend_gold(int(c["cost"]))
-			ui.set_gold(player.gold)
 			discard_card(idx)
 			render_hand()
+			ui.set_gold(player.gold)
+			ui.set_moves_left(turn_mgr.moves_left())
 
 		_:  # SUMMON_* or SMITE needs a target
 			card_selected_idx = idx

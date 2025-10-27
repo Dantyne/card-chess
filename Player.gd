@@ -1,21 +1,17 @@
-# Player.gd
 extends Node
+class_name Player
 
-var gold: int = 3  # starting gold
+signal gold_changed(new_gold: int)
 
-func gain_gold(amount: int) -> void:
-	gold += amount
-	update_gold_display()
+var gold: int = 0
 
-func spend_gold(cost: int) -> bool:
-	if gold >= cost:
-		gold -= cost
-		update_gold_display()
-		return true
-	return false
+func gain_gold(n: int) -> void:
+	gold += n
+	emit_signal("gold_changed", gold)
 
-func update_gold_display() -> void:
-	# If your UI node exists, this updates it dynamically
-	if has_node("/root/Game/UI"):
-		var ui = get_node("/root/Game/UI")
-		ui.update_gold_display(gold)
+func spend_gold(n: int) -> bool:
+	if gold < n:
+		return false
+	gold -= n
+	emit_signal("gold_changed", gold)
+	return true

@@ -1,0 +1,3 @@
+extends ConsumableBase
+class_name PieceRes
+@export var piece_code: int  # your board codes: pawn 1, bishop 2, ...

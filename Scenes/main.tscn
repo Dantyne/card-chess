@@ -1,8 +1,14 @@
-[gd_scene load_steps=4 format=3 uid="uid://c1c0g6a44l87r"]
+[gd_scene load_steps=10 format=3 uid="uid://c1c0g6a44l87r"]
 
 [ext_resource type="Script" uid="uid://djg1dww55vps0" path="res://UI.gd" id="1_8gbba"]
 [ext_resource type="PackedScene" uid="uid://d1fcwlucb6oqd" path="res://Scenes/board.tscn" id="1_jjgbg"]
 [ext_resource type="Script" uid="uid://m1ixnxxprfk1" path="res://Scenes/board.gd" id="2_bo1nx"]
+[ext_resource type="Script" uid="uid://ci3ymd1dtrogv" path="res://TurnManager.gd" id="4_jjvhh"]
+[ext_resource type="Script" uid="uid://cvxeamve6r8mv" path="res://ContentDB.gd" id="5_ynf5e"]
+[ext_resource type="Script" uid="uid://dmqppc2xty0jt" path="res://PieceManager.gd" id="6_hptm8"]
+[ext_resource type="Script" uid="uid://df1ql06vt1m5q" path="res://TokenManager.gd" id="7_d1ilt"]
+[ext_resource type="Script" uid="uid://co86i1ea6lq4m" path="res://CardManager.gd" id="8_6iyac"]
+[ext_resource type="Script" uid="uid://7uxm4fw07c4" path="res://ShopManager.gd" id="9_fdnlq"]
 
 [node name="Main" type="Node2D"]
 
@@ -19,6 +25,54 @@ anchors_preset = 0
 offset_right = 40.0
 offset_bottom = 40.0
 
+[node name="ShopPanel" type="Control" parent="CanvasLayer/HUDGroup (Conrtrol)"]
+layout_mode = 1
+anchor_left = 5.1660004
+anchor_top = -2.4
+anchor_right = 5.1660004
+anchor_bottom = -2.4
+offset_left = -251.64001
+offset_top = -96.0
+offset_right = -51.640015
+offset_bottom = 102.0
+
+[node name="VBoxContainer" type="VBoxContainer" parent="CanvasLayer/HUDGroup (Conrtrol)/ShopPanel"]
+layout_mode = 1
+anchors_preset = -1
+anchor_right = 0.328
+anchor_bottom = 0.351
+offset_left = -7.0
+offset_top = 34.558002
+offset_right = -32.6
+offset_bottom = 120.06
+
+[node name="ShopStatus" type="Label" parent="CanvasLayer/HUDGroup (Conrtrol)/ShopPanel/VBoxContainer"]
+layout_mode = 2
+
+[node name="RerollButton" type="Button" parent="CanvasLayer/HUDGroup (Conrtrol)/ShopPanel/VBoxContainer"]
+layout_mode = 2
+
+[node name="ShopItems" type="VBoxContainer" parent="CanvasLayer/HUDGroup (Conrtrol)/ShopPanel/VBoxContainer"]
+layout_mode = 2
+
 [node name="Board" parent="." instance=ExtResource("1_jjgbg")]
 position = Vector2(88, -88)
 script = ExtResource("2_bo1nx")
+
+[node name="TurnManager" type="Node2D" parent="."]
+script = ExtResource("4_jjvhh")
+
+[node name="ContentDB" type="Node" parent="."]
+script = ExtResource("5_ynf5e")
+
+[node name="PieceManager" type="Node" parent="."]
+script = ExtResource("6_hptm8")
+
+[node name="TokenManager" type="Node" parent="."]
+script = ExtResource("7_d1ilt")
+
+[node name="CardManager" type="Node" parent="."]
+script = ExtResource("8_6iyac")
+
+[node name="ShopManager" type="Node" parent="."]
+script = ExtResource("9_fdnlq")
